@@ -45,6 +45,10 @@
       .animate-fade-in { animation: fade-in-up 0.3s ease-out forwards; }
     </style>
 
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
     <!-- Import Map for Modules -->
     <script type="importmap">
     {
@@ -77,128 +81,120 @@
       } from 'recharts';
 
       // ==========================================
-      // SERVICES & API
+      // FIREBASE CONFIGURATION
+      // ==========================================
+      // ⚠️⚠️ هام جداً: استبدل البيانات التالية ببيانات مشروعك من Firebase Console ⚠️⚠️
+      const firebaseConfig = {
+        apiKey: "YOUR_API_KEY_HERE",
+        authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_PROJECT_ID.appspot.com",
+        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+        appId: "YOUR_APP_ID"
+      };
+
+      // Initialize Firebase
+      let db;
+      try {
+        if (!firebase.apps.length) {
+          firebase.initializeApp(firebaseConfig);
+        }
+        db = firebase.firestore();
+      } catch (error) {
+        console.error("Firebase Init Error:", error);
+      }
+
+      // ==========================================
+      // SERVICES & API (Cloud Firestore)
       // ==========================================
       
-      const INITIAL_TEACHERS = {
-        'eman': { 
-          name: 'إيمان الصباغ', 
-          code: 'eman', 
-          password: 'eman2025', 
-          email: 'ahmed@example.com',
-          students: [
-            { id: '31201261802388', name: 'أروى نصر الحسيني المزين' },
-            { id: '31112141802322', name: 'بسملة رضا جابر ساري' },
-            { id: '31203151804361', name: 'بسملة سعيد إسماعيل نوار' },
-            { id: '31210201800741', name: 'جنى إبراهيم أحمد الفاضلي' },
-            { id: '31110171800976', name: 'سعد محمود سعد عبد الرحيم' },
-            { id: '30905231802441', name: 'سمر سعد حسني الشاعر' },
-            { id: '31205031802805', name: 'ليلى سمارة محمود الحلو' },
-            { id: '31205101802344', name: 'بسملة محمد محمد الهنداوي' },
-            { id: '31008141800301', name: 'جنات رضا عبد النبي حيدر' },
-            { id: '31303161802728', name: 'خلود وائل نصر الفيومي' }
-          ]
-        },
-        'samar': { 
-          name: 'سمر الشاعر', 
-          code: 'samar', 
-          password: 'samar2025', 
-          email: 'samar@example.com',
-          students: [
-            { id: '31309271801245', name: 'روان قطب إبراهيم أبوبكر' },
-            { id: '31206201801651', name: 'محمد رمضان محمد محمد ساري' },
-            { id: '31206211801161', name: 'مريم علي السيد نصر' },
-            { id: '30901011806327', name: 'إيمان محمد عبد الحميد الصباغ' },
-            { id: '31407171806209', name: 'آية محمود سعد عبد الرحيم' },
-            { id: '31111111800884', name: 'تميمة مدحت أحمد الدهمة' },
-            { id: '31408031801629', name: 'ريناد رزق سالم أبونوارج' },
-            { id: '31001311801966', name: 'سمية عمر محمد القريشي' },
-            { id: '31601261802378', name: 'محمد محمود إبراهيم الرويني' }
-          ]
-        }
-      };
-
-      const STORAGE_KEYS = {
-        TEACHERS: 'quran_app_teachers',
-        STUDENTS: 'quran_app_students',
-        ATTENDANCE: 'quran_app_attendance',
-        STUDENT_LOGS: 'quran_app_student_logs',
-        ADMIN_PWD: 'quran_app_admin_pwd'
-      };
-
-      const getStored = (key, defaultVal) => {
-        const stored = localStorage.getItem(key);
-        if (!stored) return defaultVal;
-        try { return JSON.parse(stored); } catch { return defaultVal; }
-      };
-
-      const setStored = (key, val) => {
-        localStorage.setItem(key, JSON.stringify(val));
-      };
+      // Helper to map Firestore snapshot
+      const mapSnapshot = (snap) => snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
       const api = {
-        getAdminPassword: () => getStored(STORAGE_KEYS.ADMIN_PWD, 'admin2025'),
-        setAdminPassword: (password) => setStored(STORAGE_KEYS.ADMIN_PWD, password),
+        getAdminPassword: async () => {
+          try {
+            const doc = await db.collection('settings').doc('admin').get();
+            return doc.exists ? doc.data().password : 'admin2025';
+          } catch { return 'admin2025'; }
+        },
+        setAdminPassword: async (password) => {
+          await db.collection('settings').doc('admin').set({ password }, { merge: true });
+        },
         
-        getTeachers: () => getStored(STORAGE_KEYS.TEACHERS, INITIAL_TEACHERS),
-        saveTeacher: (teacher) => {
-          const teachers = api.getTeachers();
-          teachers[teacher.code] = teacher;
-          setStored(STORAGE_KEYS.TEACHERS, teachers);
+        getTeachers: async () => {
+          try {
+            const snap = await db.collection('teachers').get();
+            const teachersArr = mapSnapshot(snap);
+            // Convert array to object key-map for easier lookup
+            const teachersObj = {};
+            teachersArr.forEach(t => { teachersObj[t.code] = t; });
+            return teachersObj;
+          } catch (e) { console.error(e); return {}; }
         },
-        deleteTeacher: (code) => {
-          const teachers = api.getTeachers();
-          delete teachers[code];
-          setStored(STORAGE_KEYS.TEACHERS, teachers);
+        saveTeacher: async (teacher) => {
+          // Use 'code' as document ID to prevent duplicates easily
+          await db.collection('teachers').doc(teacher.code).set(teacher);
         },
-
-        getStudents: () => getStored(STORAGE_KEYS.STUDENTS, []),
-        registerStudent: (student) => {
-          const students = api.getStudents();
-          students.push(student);
-          setStored(STORAGE_KEYS.STUDENTS, students);
-        },
-        updateStudent: (student) => {
-          const students = api.getStudents();
-          const idx = students.findIndex(s => s.id === student.id || (s.code && s.code === student.code));
-          if (idx >= 0) {
-            students[idx] = student;
-            setStored(STORAGE_KEYS.STUDENTS, students);
-          }
-        },
-        deleteStudent: (id) => {
-          const students = api.getStudents().filter(s => s.id !== id);
-          setStored(STORAGE_KEYS.STUDENTS, students);
+        deleteTeacher: async (code) => {
+          await db.collection('teachers').doc(code).delete();
         },
 
-        getAttendance: () => getStored(STORAGE_KEYS.ATTENDANCE, []),
-        saveAttendanceBatch: (records) => {
-          const current = api.getAttendance();
-          setStored(STORAGE_KEYS.ATTENDANCE, [...current, ...records]);
+        getStudents: async () => {
+          try {
+            const snap = await db.collection('students').get();
+            return mapSnapshot(snap);
+          } catch { return []; }
+        },
+        registerStudent: async (student) => {
+          // Use code as ID if unique, or auto-ID. Using student.id from frontend logic here
+          await db.collection('students').doc(student.id.toString()).set(student);
+        },
+        updateStudent: async (student) => {
+          await db.collection('students').doc(student.id.toString()).update(student);
+        },
+        deleteStudent: async (id) => {
+          await db.collection('students').doc(id.toString()).delete();
         },
 
-        getStudentLogs: (studentCode) => {
-          const allLogs = getStored(STORAGE_KEYS.STUDENT_LOGS, {});
-          return allLogs[studentCode] || [];
+        getAttendance: async () => {
+          try {
+            const snap = await db.collection('attendance').get();
+            return mapSnapshot(snap);
+          } catch { return []; }
         },
-        saveStudentLog: (studentCode, record) => {
-          const allLogs = getStored(STORAGE_KEYS.STUDENT_LOGS, {});
-          if (!allLogs[studentCode]) allLogs[studentCode] = [];
-          allLogs[studentCode].push(record);
-          setStored(STORAGE_KEYS.STUDENT_LOGS, allLogs);
+        saveAttendanceBatch: async (records) => {
+          const batch = db.batch();
+          records.forEach(rec => {
+            const ref = db.collection('attendance').doc(); // Auto ID
+            batch.set(ref, rec);
+          });
+          await batch.commit();
         },
 
-        exportData: () => ({
-          teachers: api.getTeachers(),
-          students: api.getStudents(),
-          attendance: api.getAttendance(),
-          studentLogs: getStored(STORAGE_KEYS.STUDENT_LOGS, {})
-        }),
-        importData: (data) => {
-          if (data.teachers) setStored(STORAGE_KEYS.TEACHERS, data.teachers);
-          if (data.students) setStored(STORAGE_KEYS.STUDENTS, data.students);
-          if (data.attendance) setStored(STORAGE_KEYS.ATTENDANCE, data.attendance);
-          if (data.studentLogs) setStored(STORAGE_KEYS.STUDENT_LOGS, data.studentLogs);
+        getStudentLogs: async (studentCode) => {
+          try {
+            const snap = await db.collection('logs').where('studentCode', '==', studentCode).get();
+            return mapSnapshot(snap);
+          } catch { return []; }
+        },
+        saveStudentLog: async (studentCode, record) => {
+          await db.collection('logs').add({ ...record, studentCode });
+        },
+
+        // Helper for exporting data (fetch all collections)
+        exportData: async () => {
+          const tSnap = await db.collection('teachers').get();
+          const sSnap = await db.collection('students').get();
+          const aSnap = await db.collection('attendance').get();
+          const lSnap = await db.collection('logs').get();
+          
+          return {
+            teachers: mapSnapshot(tSnap),
+            students: mapSnapshot(sSnap),
+            attendance: mapSnapshot(aSnap),
+            studentLogs: mapSnapshot(lSnap)
+          };
         }
       };
 
@@ -207,7 +203,7 @@
       // ==========================================
       
       const Button = ({ children, variant = 'primary', fullWidth = false, className = '', ...props }) => {
-        const baseStyles = "py-3 px-6 rounded-xl font-bold transition-all duration-300 transform hover:scale-[1.02] shadow-md";
+        const baseStyles = "py-3 px-6 rounded-xl font-bold transition-all duration-300 transform hover:scale-[1.02] shadow-md disabled:opacity-50 disabled:cursor-not-allowed";
         const variants = {
           primary: "bg-primary text-white hover:bg-secondary",
           secondary: "bg-gray-200 text-gray-800 hover:bg-gray-300",
@@ -291,47 +287,59 @@
         const [formData, setFormData] = useState({ code: '', password: '', name: '', confirmPassword: '' });
         const [error, setError] = useState('');
         const [success, setSuccess] = useState('');
+        const [loading, setLoading] = useState(false);
 
         const handleChange = (e) => {
           setFormData({ ...formData, [e.target.name]: e.target.value });
           setError('');
         };
 
-        const handleAdminLogin = () => {
-          if (formData.password === api.getAdminPassword()) {
+        const handleAdminLogin = async () => {
+          setLoading(true);
+          const realPwd = await api.getAdminPassword();
+          if (formData.password === realPwd) {
             onLoginSuccess('admin');
           } else {
             setError('كلمة السر غير صحيحة');
           }
+          setLoading(false);
         };
 
-        const handleTeacherLogin = () => {
-          const teachers = api.getTeachers();
+        const handleTeacherLogin = async () => {
+          setLoading(true);
+          const teachers = await api.getTeachers();
           const teacher = teachers[formData.code];
           if (teacher && teacher.password === formData.password) {
             onLoginSuccess('teacher', teacher);
           } else {
             setError('الكود أو كلمة السر خطأ');
           }
+          setLoading(false);
         };
 
-        const handleStudentLogin = () => {
-          const students = api.getStudents();
+        const handleStudentLogin = async () => {
+          setLoading(true);
+          const students = await api.getStudents();
           const student = students.find(s => s.code === formData.code && s.password === formData.password);
           if (student) {
             onLoginSuccess('student', student);
           } else {
             setError('بيانات الدخول غير صحيحة');
           }
+          setLoading(false);
         };
 
-        const handleStudentRegister = () => {
+        const handleStudentRegister = async () => {
           if (!formData.name || !formData.code || !formData.password) return setError('أكمل البيانات');
           if (formData.password !== formData.confirmPassword) return setError('كلمات السر غير متطابقة');
-          const students = api.getStudents();
-          if (students.some(s => s.code === formData.code)) return setError('الكود مستخدم من قبل');
+          setLoading(true);
+          const students = await api.getStudents();
+          if (students.some(s => s.code === formData.code)) {
+            setLoading(false);
+            return setError('الكود مستخدم من قبل');
+          }
 
-          api.registerStudent({
+          await api.registerStudent({
             id: Date.now().toString(),
             name: formData.name,
             code: formData.code,
@@ -355,6 +363,15 @@
           <div className="flex items-center justify-center min-h-[70vh]">
             <Card className="w-full max-w-md animate-fade-in-up">
               <h2 className="text-2xl font-bold text-center text-secondary mb-6">{titles[view]}</h2>
+              
+              {/* Alert for Firebase Config */}
+              {firebaseConfig.apiKey === "YOUR_API_KEY_HERE" && (
+                 <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4 text-xs">
+                    <strong className="font-bold">تنبيه المطور:</strong>
+                    <span className="block sm:inline"> لم يتم ربط التطبيق بقاعدة البيانات. لن يعمل الدخول بشكل صحيح حتى يتم تحديث إعدادات Firebase في الكود.</span>
+                 </div>
+              )}
+
               {view === 'REGISTER_STUDENT' && (
                 <Input label="اسم الطالب" name="name" value={formData.name} onChange={handleChange} placeholder="الاسم الثلاثي" />
               )}
@@ -368,10 +385,10 @@
               {error && <div className="text-red-500 text-center mb-4 text-sm font-bold">{error}</div>}
               {success && <div className="text-green-500 text-center mb-4 text-sm font-bold">{success}</div>}
               <div className="mt-6 space-y-3">
-                {view === 'LOGIN_ADMIN' && <Button fullWidth onClick={handleAdminLogin}>دخول</Button>}
-                {view === 'LOGIN_TEACHER' && <Button fullWidth onClick={handleTeacherLogin}>دخول</Button>}
-                {view === 'LOGIN_STUDENT' && <Button fullWidth onClick={handleStudentLogin}>دخول</Button>}
-                {view === 'REGISTER_STUDENT' && <Button fullWidth onClick={handleStudentRegister}>تسجيل</Button>}
+                {view === 'LOGIN_ADMIN' && <Button fullWidth onClick={handleAdminLogin} disabled={loading}>{loading ? 'جاري التحقق...' : 'دخول'}</Button>}
+                {view === 'LOGIN_TEACHER' && <Button fullWidth onClick={handleTeacherLogin} disabled={loading}>{loading ? 'جاري التحقق...' : 'دخول'}</Button>}
+                {view === 'LOGIN_STUDENT' && <Button fullWidth onClick={handleStudentLogin} disabled={loading}>{loading ? 'جاري التحقق...' : 'دخول'}</Button>}
+                {view === 'REGISTER_STUDENT' && <Button fullWidth onClick={handleStudentRegister} disabled={loading}>{loading ? 'جاري التسجيل...' : 'تسجيل'}</Button>}
                 <Button fullWidth variant="secondary" onClick={() => onNavigate('HOME')}>رجوع للقائمة الرئيسية</Button>
                 {view === 'LOGIN_STUDENT' && (
                   <div className="text-center mt-2">
@@ -395,11 +412,19 @@
         const [newTeacher, setNewTeacher] = useState({ name: '', code: '', password: '', email: '' });
         const [pwdData, setPwdData] = useState({ old: '', new: '', confirm: '' });
         const [selectedStudentLogs, setSelectedStudentLogs] = useState(null);
+        const [loading, setLoading] = useState(false);
 
-        const refreshData = () => {
-          setRecords(api.getAttendance());
-          setTeachers(api.getTeachers());
-          setStudents(api.getStudents());
+        const refreshData = async () => {
+          setLoading(true);
+          const [rec, teach, stud] = await Promise.all([
+             api.getAttendance(),
+             api.getTeachers(),
+             api.getStudents()
+          ]);
+          setRecords(rec);
+          setTeachers(teach);
+          setStudents(stud);
+          setLoading(false);
         };
 
         useEffect(() => { refreshData(); }, []);
@@ -414,16 +439,18 @@
           absent: filteredRecords.filter(r => r.status === 'absent').length,
         };
 
-        const handleAddTeacher = () => {
+        const handleAddTeacher = async () => {
           if (!newTeacher.name || !newTeacher.code) return alert('أكمل البيانات');
-          api.saveTeacher({ ...newTeacher, students: [] });
+          setLoading(true);
+          await api.saveTeacher({ ...newTeacher, students: [] });
           setNewTeacher({ name: '', code: '', password: '', email: '' });
-          refreshData();
+          await refreshData();
+          setLoading(false);
           alert('تم إضافة المعلم');
         };
 
-        const handleDeleteTeacher = (code) => { if (confirm('هل أنت متأكد؟')) { api.deleteTeacher(code); refreshData(); } };
-        const handleDeleteStudent = (id) => { if(confirm('حذف الطالب؟')) { api.deleteStudent(id); refreshData(); } };
+        const handleDeleteTeacher = async (code) => { if (confirm('هل أنت متأكد؟')) { setLoading(true); await api.deleteTeacher(code); await refreshData(); setLoading(false); } };
+        const handleDeleteStudent = async (id) => { if(confirm('حذف الطالب؟')) { setLoading(true); await api.deleteStudent(id); await refreshData(); setLoading(false); } };
 
         const handleExportCSV = () => {
           let csv = '\uFEFFالتاريخ,المعلم,اسم الطالب,الحالة,الملاحظات\n';
@@ -436,37 +463,44 @@
           const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `attendance_${filterDate}.csv`; link.click();
         };
 
-        const handleExportStudentLogsCSV = () => {
-          const allData = api.exportData();
-          const studentsList = api.getStudents();
-          const studentMap = studentsList.reduce((acc, s) => { if(s.code) acc[s.code] = s.name; return acc; }, {});
+        const handleExportStudentLogsCSV = async () => {
+          setLoading(true);
+          const allData = await api.exportData();
+          const studentMap = allData.students.reduce((acc, s) => { if(s.code) acc[s.code] = s.name; return acc; }, {});
+          
           let csv = '\uFEFFالتاريخ,اسم الطالب,الكود,الحفظ الجديد,المراجعة,التسميع,الهدف,ملاحظات\n';
-          Object.entries(allData.studentLogs).forEach(([code, logs]) => {
-             const name = studentMap[code] || 'غير معروف';
-             logs.forEach(log => {
-                csv += `"${log.dateDisplay}","${name}","${code}","${(log.newMemorizing || '').replace(/"/g, '""')}","${(log.review || '').replace(/"/g, '""')}","${log.listening}","${(log.newTarget || '').replace(/"/g, '""')}","${(log.notes || '').replace(/"/g, '""')}"\n`;
-             });
+          
+          allData.studentLogs.forEach(log => {
+             const name = studentMap[log.studentCode] || 'غير معروف';
+             csv += `"${log.dateDisplay}","${name}","${log.studentCode}","${(log.newMemorizing || '').replace(/"/g, '""')}","${(log.review || '').replace(/"/g, '""')}","${log.listening}","${(log.newTarget || '').replace(/"/g, '""')}","${(log.notes || '').replace(/"/g, '""')}"\n`;
           });
+          
           const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
           const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `student_logs_${new Date().toISOString().split('T')[0]}.csv`; link.click();
+          setLoading(false);
         };
 
-        const handleBackup = () => {
-          const data = api.exportData();
-          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-          const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `backup_${new Date().toISOString().split('T')[0]}.json`; link.click();
-        };
-
-        const handleChangePassword = () => {
-          if (pwdData.old !== api.getAdminPassword()) return alert('كلمة السر الحالية خطأ');
+        const handleChangePassword = async () => {
+          const currentPwd = await api.getAdminPassword();
+          if (pwdData.old !== currentPwd) return alert('كلمة السر الحالية خطأ');
           if (pwdData.new.length < 4 || pwdData.new !== pwdData.confirm) return alert('خطأ في كلمة السر الجديدة');
-          api.setAdminPassword(pwdData.new);
+          await api.setAdminPassword(pwdData.new);
           setPwdData({ old: '', new: '', confirm: '' });
           alert('تم التغيير بنجاح'); onLogout();
+        };
+        
+        const loadStudentLogs = async (student) => {
+           if(student.code) {
+             setLoading(true);
+             const logs = await api.getStudentLogs(student.code);
+             setSelectedStudentLogs({ student, logs });
+             setLoading(false);
+           } else alert('لا يوجد كود'); 
         };
 
         return (
           <div className="pb-20">
+            {loading && <div className="fixed inset-0 bg-white/50 z-[200] flex items-center justify-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div></div>}
             <div className="bg-white p-6 rounded-2xl shadow-sm mb-6 flex flex-col justify-between items-center gap-4 text-center">
               <div><h2 className="text-2xl font-bold text-secondary">لوحة الإدارة</h2><p className="text-primary mt-1">{new Date().toLocaleDateString('ar-EG')}</p></div>
               <Button variant="danger" onClick={onLogout}>خروج</Button>
@@ -561,7 +595,7 @@
                             <div><div className="font-bold text-secondary">{s.name}</div><div className="text-xs text-gray-500">{s.code}</div></div>
                             <Button className="p-2 h-8 w-8 flex items-center justify-center" variant="danger" onClick={() => handleDeleteStudent(s.id)}><Trash2 className="w-4 h-4" /></Button>
                          </div>
-                         <Button fullWidth className="text-sm py-2 mt-2" variant="primary" onClick={() => { if(s.code) setSelectedStudentLogs({ student: s, logs: api.getStudentLogs(s.code) }); else alert('لا يوجد كود'); }}><Eye className="w-4 h-4 inline ml-1" /> عرض اليوميات</Button>
+                         <Button fullWidth className="text-sm py-2 mt-2" variant="primary" onClick={() => loadStudentLogs(s)}><Eye className="w-4 h-4 inline ml-1" /> عرض اليوميات</Button>
                        </div>
                      ))}
                    </div>
@@ -571,8 +605,6 @@
               <Card title="التقارير">
                 <div className="space-y-4">
                   <Button onClick={handleExportStudentLogsCSV} variant="primary" fullWidth><Download className="ml-2 w-4 h-4" /> يوميات الطلاب (Excel)</Button>
-                  <Button onClick={handleBackup} variant="purple" fullWidth>نسخة احتياطية (JSON)</Button>
-                  <div className="border-t pt-4"><p className="mb-2">استعادة:</p><input type="file" onChange={e => { const f=e.target.files[0]; if(f){const r=new FileReader();r.onload=(v)=>{try{api.importData(JSON.parse(v.target.result));alert('تم');refreshData();}catch{alert('خطأ');}};r.readAsText(f);}}} className="w-full border-2 border-dashed p-4 rounded" /></div>
                 </div>
               </Card>
             )}
@@ -616,41 +648,73 @@
         const [showChangePwd, setShowChangePwd] = useState(false);
         const [newStudent, setNewStudent] = useState({ name: '', id: '' });
         const [newPwd, setNewPwd] = useState('');
+        const [loading, setLoading] = useState(false);
 
         useEffect(() => {
-          const updated = api.getTeachers()[teacher.code];
-          if (updated) {
-            setCurrentTeacher(updated);
-            const init = {}; updated.students?.forEach(s => init[s.name] = { status: null, notes: '' });
-            setAttendance(init);
+          const load = async () => {
+             const teachers = await api.getTeachers();
+             const updated = teachers[teacher.code];
+             if (updated) {
+               setCurrentTeacher(updated);
+               const init = {}; updated.students?.forEach(s => init[s.name] = { status: null, notes: '' });
+               setAttendance(init);
+             }
           }
+          load();
         }, [teacher.code]);
 
         const handleStatus = (name, status) => setAttendance(p => ({ ...p, [name]: { ...p[name], status: p[name]?.status === status ? null : status } }));
         const handleNote = (name, notes) => setAttendance(p => ({ ...p, [name]: { ...p[name], notes } }));
         
-        const saveAttendance = () => {
+        const saveAttendance = async () => {
           const records = Object.entries(attendance).filter(([_, d]) => d.status).map(([n, d]) => ({
             id: `${Date.now()}-${Math.random()}`, teacherCode: currentTeacher.code, studentName: n, status: d.status, notes: d.notes, date: new Date().toISOString().split('T')[0]
           }));
           if (!records.length) return alert('حدد الحالة');
-          api.saveAttendanceBatch(records); alert('تم الحفظ'); onLogout();
+          setLoading(true);
+          await api.saveAttendanceBatch(records); 
+          setLoading(false);
+          alert('تم الحفظ'); onLogout();
         };
 
-        const handleAddStudent = () => {
+        const handleAddStudent = async () => {
           if(!newStudent.name||!newStudent.id) return alert('بيانات ناقصة');
+          setLoading(true);
           const t = { ...currentTeacher }; if(!t.students) t.students=[];
-          if(t.students.some(s=>s.id===newStudent.id)) return alert('موجود');
-          t.students.push(newStudent); api.saveTeacher(t); setCurrentTeacher(t); setNewStudent({name:'',id:''}); alert('تم');
+          if(t.students.some(s=>s.id===newStudent.id)) { setLoading(false); return alert('موجود'); }
+          t.students.push(newStudent); 
+          await api.saveTeacher(t); 
+          setCurrentTeacher(t); 
+          setNewStudent({name:'',id:''}); 
+          setLoading(false);
+          alert('تم');
         };
 
-        const handleChangePwd = () => {
+        const handleDeleteStudent = async (studentId) => {
+            if(confirm('حذف؟')){
+                setLoading(true);
+                const t={...currentTeacher};
+                t.students=t.students.filter(x=>x.id!==studentId);
+                await api.saveTeacher(t);
+                setCurrentTeacher(t);
+                setLoading(false);
+            }
+        };
+
+        const handleChangePwd = async () => {
           if(newPwd.length<4) return alert('قصيرة');
-          const t={...currentTeacher, password:newPwd}; api.saveTeacher(t); setCurrentTeacher(t); setNewPwd(''); alert('تم'); setShowChangePwd(false);
+          setLoading(true);
+          const t={...currentTeacher, password:newPwd}; 
+          await api.saveTeacher(t); 
+          setCurrentTeacher(t); 
+          setNewPwd(''); 
+          setLoading(false);
+          alert('تم'); setShowChangePwd(false);
         };
 
         return (
           <div className="pb-24">
+            {loading && <div className="fixed inset-0 bg-white/50 z-[200] flex items-center justify-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div></div>}
             <Card className="mb-6 sticky top-4 z-40 border-green-100 flex justify-between items-center">
               <div><h2 className="text-xl font-bold text-secondary">الحضور</h2><div className="text-sm">{currentTeacher.name}</div></div>
               <div className="flex gap-2">
@@ -685,7 +749,7 @@
                       <Button fullWidth onClick={handleAddStudent} variant="accent">إضافة</Button>
                   </div>
                   <div className="max-h-60 overflow-y-auto space-y-2">
-                     {currentTeacher.students?.map(s=>(<div key={s.id} className="flex justify-between p-2 border bg-white"><span>{s.name}</span><button onClick={()=>{if(confirm('حذف؟')){const t={...currentTeacher};t.students=t.students.filter(x=>x.id!==s.id);api.saveTeacher(t);setCurrentTeacher(t);}}} className="text-red-500"><Trash2 className="w-4 h-4"/></button></div>))}
+                     {currentTeacher.students?.map(s=>(<div key={s.id} className="flex justify-between p-2 border bg-white"><span>{s.name}</span><button onClick={() => handleDeleteStudent(s.id)} className="text-red-500"><Trash2 className="w-4 h-4"/></button></div>))}
                   </div>
                   <Button fullWidth variant="secondary" onClick={()=>setShowManageStudents(false)} className="mt-4">إغلاق</Button>
                 </Card>
@@ -709,27 +773,42 @@
         const [form, setForm] = useState({ newMemorizing: '', review: '', listening: '', newTarget: '', notes: '' });
         const [showChangePwd, setShowChangePwd] = useState(false);
         const [newPwd, setNewPwd] = useState('');
+        const [loading, setLoading] = useState(false);
 
-        useEffect(() => { if(student.code) setLogs(api.getStudentLogs(student.code)); }, [student.code]);
+        useEffect(() => { 
+            const load = async () => {
+                if(student.code) {
+                    const l = await api.getStudentLogs(student.code);
+                    setLogs(l);
+                }
+            };
+            load();
+        }, [student.code]);
 
-        const handleSubmit = () => {
+        const handleSubmit = async () => {
           if (!form.newMemorizing || !form.review || !form.listening || !form.newTarget) return alert('أكمل البيانات');
           if (!student.code) return alert('خطأ في الكود');
+          setLoading(true);
           const rec = { ...form, date: new Date().toISOString(), dateDisplay: new Date().toLocaleDateString('ar-EG') };
-          api.saveStudentLog(student.code, rec);
+          await api.saveStudentLog(student.code, rec);
           setLogs([rec, ...logs]);
           setForm({ newMemorizing: '', review: '', listening: '', newTarget: '', notes: '' });
+          setLoading(false);
           alert('تم الحفظ');
         };
 
-        const handleChangePwd = () => {
+        const handleChangePwd = async () => {
            if(newPwd.length<4) return alert('قصيرة');
-           api.updateStudent({ ...student, password: newPwd });
-           setNewPwd(''); alert('تم التغيير'); onLogout();
+           setLoading(true);
+           await api.updateStudent({ ...student, password: newPwd });
+           setNewPwd(''); 
+           setLoading(false);
+           alert('تم التغيير'); onLogout();
         };
 
         return (
           <div className="pb-20">
+             {loading && <div className="fixed inset-0 bg-white/50 z-[200] flex items-center justify-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div></div>}
             <Card className="mb-6 bg-gradient-to-r from-green-50 to-white flex justify-between">
               <div><h2 className="text-2xl font-bold text-secondary">مرحباً {student.name}</h2><div className="text-sm">الكود: {student.code}</div></div>
               <Button variant="secondary" onClick={()=>setShowChangePwd(true)} className="p-2"><Key className="w-5 h-5"/></Button>
@@ -746,7 +825,7 @@
               <Card title="السجل" className="max-h-[800px] flex flex-col">
                  <div className="overflow-y-auto flex-1 custom-scrollbar space-y-4 pr-2">
                     {logs.length===0 && <div className="text-center py-10 text-gray-400">لا يوجد سجلات</div>}
-                    {logs.slice().reverse().map((log, i) => (
+                    {logs.slice().sort((a,b) => new Date(b.date) - new Date(a.date)).map((log, i) => (
                       <div key={i} className="bg-gray-50 rounded-xl p-4 border hover:border-green-200 transition-colors">
                         <div className="font-bold text-primary mb-2 border-b pb-1">📅 {log.dateDisplay}</div>
                         <div className="grid grid-cols-2 gap-2 text-sm">
