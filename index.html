@@ -45,13 +45,6 @@
       .animate-fade-in { animation: fade-in-up 0.3s ease-out forwards; }
     </style>
 
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-    
-    <!-- Firebase Configuration File -->
-    <script src="firebase-config.js"></script>
-
     <!-- Import Map for Modules -->
     <script type="importmap">
     {
@@ -77,114 +70,150 @@
         User, FileText, Users, Download, Settings, Lock, 
         UserCheck, UserX, Trash2, Eye, Key, LogOut, 
         Settings as SettingsIcon, Check, X, UserPlus, 
-        Save, History, BookOpen 
+        Save, History, BookOpen, Search
       } from 'lucide-react';
       import { 
         BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
       } from 'recharts';
+      import { db } from './firebase-config.js';
+      import { 
+        collection, getDocs, doc, setDoc, getDoc, addDoc, deleteDoc, updateDoc, query, where, writeBatch 
+      } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
       // ==========================================
-      // SERVICES & API (Cloud Firestore)
+      // SERVICES & API (Firebase Edition)
       // ==========================================
       
-      // Access global config and db initialized in firebase-config.js
-      const firebaseConfig = window.firebaseConfig || {};
-      
-      // Initialize db reference (assuming firebase is initialized in firebase-config.js)
-      let db;
-      try {
-        db = firebase.firestore();
-      } catch (error) {
-        console.error("Firestore Init Error (Ensure firebase-config.js is loaded):", error);
-      }
-      
-      // Helper to map Firestore snapshot
-      const mapSnapshot = (snap) => snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const INITIAL_TEACHERS = {
+        'eman': { 
+          name: 'إيمان الصباغ', 
+          code: 'eman', 
+          password: 'eman2025', 
+          email: 'ahmed@example.com',
+          students: [
+            { id: '31201261802388', name: 'أروى نصر الحسيني المزين' },
+            { id: '31112141802322', name: 'بسملة رضا جابر ساري' },
+            { id: '31203151804361', name: 'بسملة سعيد إسماعيل نوار' },
+            { id: '31210201800741', name: 'جنى إبراهيم أحمد الفاضلي' },
+            { id: '31110171800976', name: 'سعد محمود سعد عبد الرحيم' },
+            { id: '30905231802441', name: 'سمر سعد حسني الشاعر' },
+            { id: '31205031802805', name: 'ليلى سمارة محمود الحلو' },
+            { id: '31205101802344', name: 'بسملة محمد محمد الهنداوي' },
+            { id: '31008141800301', name: 'جنات رضا عبد النبي حيدر' },
+            { id: '31303161802728', name: 'خلود وائل نصر الفيومي' }
+          ]
+        },
+        'samar': { 
+          name: 'سمر الشاعر', 
+          code: 'samar', 
+          password: 'samar2025', 
+          email: 'samar@example.com',
+          students: [
+            { id: '31309271801245', name: 'روان قطب إبراهيم أبوبكر' },
+            { id: '31206201801651', name: 'محمد رمضان محمد محمد ساري' },
+            { id: '31206211801161', name: 'مريم علي السيد نصر' },
+            { id: '30901011806327', name: 'إيمان محمد عبد الحميد الصباغ' },
+            { id: '31407171806209', name: 'آية محمود سعد عبد الرحيم' },
+            { id: '31111111800884', name: 'تميمة مدحت أحمد الدهمة' },
+            { id: '31408031801629', name: 'ريناد رزق سالم أبونوارج' },
+            { id: '31001311801966', name: 'سمية عمر محمد القريشي' },
+            { id: '31601261802378', name: 'محمد محمود إبراهيم الرويني' }
+          ]
+        }
+      };
 
       const api = {
         getAdminPassword: async () => {
           try {
-            const doc = await db.collection('settings').doc('admin').get();
-            return doc.exists ? doc.data().password : 'admin2025';
-          } catch { return 'admin2025'; }
+            const d = await getDoc(doc(db, 'settings', 'admin'));
+            return d.exists() ? d.data().password : 'admin2025';
+          } catch (e) {
+            console.error(e);
+            return 'admin2025';
+          }
         },
         setAdminPassword: async (password) => {
-          await db.collection('settings').doc('admin').set({ password }, { merge: true });
+          await setDoc(doc(db, 'settings', 'admin'), { password });
         },
-        
         getTeachers: async () => {
           try {
-            const snap = await db.collection('teachers').get();
-            const teachersArr = mapSnapshot(snap);
-            // Convert array to object key-map for easier lookup
-            const teachersObj = {};
-            teachersArr.forEach(t => { teachersObj[t.code] = t; });
-            return teachersObj;
-          } catch (e) { console.error(e); return {}; }
+            const snap = await getDocs(collection(db, 'teachers'));
+            const teachers = {};
+            if (snap.empty) {
+              // Seed if empty
+              for (const [code, t] of Object.entries(INITIAL_TEACHERS)) {
+                await setDoc(doc(db, 'teachers', code), t);
+                teachers[code] = t;
+              }
+              return teachers;
+            }
+            snap.forEach(d => teachers[d.id] = d.data());
+            return teachers;
+          } catch (e) {
+            console.error("Error fetching teachers:", e);
+            return {};
+          }
         },
         saveTeacher: async (teacher) => {
-          // Use 'code' as document ID to prevent duplicates easily
-          await db.collection('teachers').doc(teacher.code).set(teacher);
+          await setDoc(doc(db, 'teachers', teacher.code), teacher);
         },
         deleteTeacher: async (code) => {
-          await db.collection('teachers').doc(code).delete();
+          await deleteDoc(doc(db, 'teachers', code));
         },
-
         getStudents: async () => {
-          try {
-            const snap = await db.collection('students').get();
-            return mapSnapshot(snap);
-          } catch { return []; }
+          const snap = await getDocs(collection(db, 'students'));
+          return snap.docs.map(d => d.data());
         },
         registerStudent: async (student) => {
-          // Use code as ID if unique, or auto-ID. Using student.id from frontend logic here
-          await db.collection('students').doc(student.id.toString()).set(student);
+          await setDoc(doc(db, 'students', student.id), student);
         },
         updateStudent: async (student) => {
-          await db.collection('students').doc(student.id.toString()).update(student);
+          await setDoc(doc(db, 'students', student.id), student, { merge: true });
         },
         deleteStudent: async (id) => {
-          await db.collection('students').doc(id.toString()).delete();
+          await deleteDoc(doc(db, 'students', id));
         },
-
         getAttendance: async () => {
-          try {
-            const snap = await db.collection('attendance').get();
-            return mapSnapshot(snap);
-          } catch { return []; }
+          const snap = await getDocs(collection(db, 'attendance'));
+          return snap.docs.map(d => d.data());
         },
         saveAttendanceBatch: async (records) => {
-          const batch = db.batch();
-          records.forEach(rec => {
-            const ref = db.collection('attendance').doc(); // Auto ID
-            batch.set(ref, rec);
+          const batch = writeBatch(db);
+          records.forEach(r => {
+            const ref = doc(collection(db, 'attendance'));
+            batch.set(ref, r);
           });
           await batch.commit();
         },
-
         getStudentLogs: async (studentCode) => {
-          try {
-            const snap = await db.collection('logs').where('studentCode', '==', studentCode).get();
-            return mapSnapshot(snap);
-          } catch { return []; }
+          const q = query(collection(db, 'student_logs'), where('studentCode', '==', studentCode));
+          const snap = await getDocs(q);
+          return snap.docs.map(d => d.data());
         },
         saveStudentLog: async (studentCode, record) => {
-          await db.collection('logs').add({ ...record, studentCode });
+          await addDoc(collection(db, 'student_logs'), { ...record, studentCode });
         },
-
-        // Helper for exporting data (fetch all collections)
         exportData: async () => {
-          const tSnap = await db.collection('teachers').get();
-          const sSnap = await db.collection('students').get();
-          const aSnap = await db.collection('attendance').get();
-          const lSnap = await db.collection('logs').get();
+          const tSnap = await getDocs(collection(db, 'teachers'));
+          const sSnap = await getDocs(collection(db, 'students'));
+          const aSnap = await getDocs(collection(db, 'attendance'));
+          const lSnap = await getDocs(collection(db, 'student_logs'));
           
-          return {
-            teachers: mapSnapshot(tSnap),
-            students: mapSnapshot(sSnap),
-            attendance: mapSnapshot(aSnap),
-            studentLogs: mapSnapshot(lSnap)
-          };
+          const teachers = {}; tSnap.forEach(d => teachers[d.id] = d.data());
+          const students = sSnap.docs.map(d => d.data());
+          const attendance = aSnap.docs.map(d => d.data());
+          
+          const studentLogs = {};
+          lSnap.forEach(d => {
+             const data = d.data();
+             if(!studentLogs[data.studentCode]) studentLogs[data.studentCode] = [];
+             studentLogs[data.studentCode].push(data);
+          });
+          
+          return { teachers, students, attendance, studentLogs };
+        },
+        importData: async (data) => {
+          alert('خاصية الاستيراد الكامل غير مفعلة حالياً للنسخة السحابية لسلامة البيانات.');
         }
       };
 
@@ -193,7 +222,7 @@
       // ==========================================
       
       const Button = ({ children, variant = 'primary', fullWidth = false, className = '', ...props }) => {
-        const baseStyles = "py-3 px-6 rounded-xl font-bold transition-all duration-300 transform hover:scale-[1.02] shadow-md disabled:opacity-50 disabled:cursor-not-allowed";
+        const baseStyles = "py-3 px-6 rounded-xl font-bold transition-all duration-300 transform hover:scale-[1.02] shadow-md";
         const variants = {
           primary: "bg-primary text-white hover:bg-secondary",
           secondary: "bg-gray-200 text-gray-800 hover:bg-gray-300",
@@ -286,37 +315,37 @@
 
         const handleAdminLogin = async () => {
           setLoading(true);
-          const realPwd = await api.getAdminPassword();
-          if (formData.password === realPwd) {
+          const pwd = await api.getAdminPassword();
+          setLoading(false);
+          if (formData.password === pwd) {
             onLoginSuccess('admin');
           } else {
             setError('كلمة السر غير صحيحة');
           }
-          setLoading(false);
         };
 
         const handleTeacherLogin = async () => {
           setLoading(true);
           const teachers = await api.getTeachers();
+          setLoading(false);
           const teacher = teachers[formData.code];
           if (teacher && teacher.password === formData.password) {
             onLoginSuccess('teacher', teacher);
           } else {
             setError('الكود أو كلمة السر خطأ');
           }
-          setLoading(false);
         };
 
         const handleStudentLogin = async () => {
           setLoading(true);
           const students = await api.getStudents();
+          setLoading(false);
           const student = students.find(s => s.code === formData.code && s.password === formData.password);
           if (student) {
             onLoginSuccess('student', student);
           } else {
             setError('بيانات الدخول غير صحيحة');
           }
-          setLoading(false);
         };
 
         const handleStudentRegister = async () => {
@@ -325,8 +354,8 @@
           setLoading(true);
           const students = await api.getStudents();
           if (students.some(s => s.code === formData.code)) {
-            setLoading(false);
-            return setError('الكود مستخدم من قبل');
+             setLoading(false);
+             return setError('الكود مستخدم من قبل');
           }
 
           await api.registerStudent({
@@ -337,6 +366,7 @@
             class: 'جديد',
             registrationDate: new Date().toISOString()
           });
+          setLoading(false);
 
           setSuccess('تم التسجيل بنجاح! جاري التحويل...');
           setTimeout(() => onNavigate('LOGIN_STUDENT'), 1500);
@@ -353,15 +383,6 @@
           <div className="flex items-center justify-center min-h-[70vh]">
             <Card className="w-full max-w-md animate-fade-in-up">
               <h2 className="text-2xl font-bold text-center text-secondary mb-6">{titles[view]}</h2>
-              
-              {/* Alert for Firebase Config */}
-              {(firebaseConfig.apiKey === "YOUR_API_KEY_HERE" || !firebaseConfig.apiKey) && (
-                 <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4 text-xs">
-                    <strong className="font-bold">تنبيه المطور:</strong>
-                    <span className="block sm:inline"> لم يتم ربط التطبيق بقاعدة البيانات. لن يعمل الدخول بشكل صحيح حتى يتم تحديث إعدادات Firebase في الملف firebase-config.js.</span>
-                 </div>
-              )}
-
               {view === 'REGISTER_STUDENT' && (
                 <Input label="اسم الطالب" name="name" value={formData.name} onChange={handleChange} placeholder="الاسم الثلاثي" />
               )}
@@ -403,17 +424,13 @@
         const [pwdData, setPwdData] = useState({ old: '', new: '', confirm: '' });
         const [selectedStudentLogs, setSelectedStudentLogs] = useState(null);
         const [loading, setLoading] = useState(false);
+        const [studentSearch, setStudentSearch] = useState('');
 
         const refreshData = async () => {
           setLoading(true);
-          const [rec, teach, stud] = await Promise.all([
-             api.getAttendance(),
-             api.getTeachers(),
-             api.getStudents()
-          ]);
-          setRecords(rec);
-          setTeachers(teach);
-          setStudents(stud);
+          setRecords(await api.getAttendance());
+          setTeachers(await api.getTeachers());
+          setStudents(await api.getStudents());
           setLoading(false);
         };
 
@@ -423,11 +440,18 @@
           return (filterDate ? r.date === filterDate : true) && (filterTeacher ? r.teacherCode === filterTeacher : true);
         });
 
+        // Sort records by date descending
+        filteredRecords.sort((a, b) => new Date(b.date) - new Date(a.date));
+
         const stats = {
           total: filteredRecords.length,
           present: filteredRecords.filter(r => r.status === 'present').length,
           absent: filteredRecords.filter(r => r.status === 'absent').length,
         };
+
+        const filteredStudents = students.filter(s => 
+           s.name.includes(studentSearch) || (s.code && s.code.includes(studentSearch))
+        );
 
         const handleAddTeacher = async () => {
           if (!newTeacher.name || !newTeacher.code) return alert('أكمل البيانات');
@@ -435,12 +459,11 @@
           await api.saveTeacher({ ...newTeacher, students: [] });
           setNewTeacher({ name: '', code: '', password: '', email: '' });
           await refreshData();
-          setLoading(false);
           alert('تم إضافة المعلم');
         };
 
-        const handleDeleteTeacher = async (code) => { if (confirm('هل أنت متأكد؟')) { setLoading(true); await api.deleteTeacher(code); await refreshData(); setLoading(false); } };
-        const handleDeleteStudent = async (id) => { if(confirm('حذف الطالب؟')) { setLoading(true); await api.deleteStudent(id); await refreshData(); setLoading(false); } };
+        const handleDeleteTeacher = async (code) => { if (confirm('هل أنت متأكد؟')) { setLoading(true); await api.deleteTeacher(code); await refreshData(); } };
+        const handleDeleteStudent = async (id) => { if(confirm('حذف الطالب؟')) { setLoading(true); await api.deleteStudent(id); await refreshData(); } };
 
         const handleExportCSV = () => {
           let csv = '\uFEFFالتاريخ,المعلم,اسم الطالب,الحالة,الملاحظات\n';
@@ -456,18 +479,18 @@
         const handleExportStudentLogsCSV = async () => {
           setLoading(true);
           const allData = await api.exportData();
-          const studentMap = allData.students.reduce((acc, s) => { if(s.code) acc[s.code] = s.name; return acc; }, {});
-          
+          setLoading(false);
+          const studentsList = await api.getStudents();
+          const studentMap = studentsList.reduce((acc, s) => { if(s.code) acc[s.code] = s.name; return acc; }, {});
           let csv = '\uFEFFالتاريخ,اسم الطالب,الكود,الحفظ الجديد,المراجعة,التسميع,الهدف,ملاحظات\n';
-          
-          allData.studentLogs.forEach(log => {
-             const name = studentMap[log.studentCode] || 'غير معروف';
-             csv += `"${log.dateDisplay}","${name}","${log.studentCode}","${(log.newMemorizing || '').replace(/"/g, '""')}","${(log.review || '').replace(/"/g, '""')}","${log.listening}","${(log.newTarget || '').replace(/"/g, '""')}","${(log.notes || '').replace(/"/g, '""')}"\n`;
+          Object.entries(allData.studentLogs).forEach(([code, logs]) => {
+             const name = studentMap[code] || 'غير معروف';
+             logs.forEach(log => {
+                csv += `"${log.dateDisplay}","${name}","${code}","${(log.newMemorizing || '').replace(/"/g, '""')}","${(log.review || '').replace(/"/g, '""')}","${log.listening}","${(log.newTarget || '').replace(/"/g, '""')}","${(log.notes || '').replace(/"/g, '""')}"\n`;
+             });
           });
-          
           const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
           const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `student_logs_${new Date().toISOString().split('T')[0]}.csv`; link.click();
-          setLoading(false);
         };
 
         const handleChangePassword = async () => {
@@ -478,21 +501,20 @@
           setPwdData({ old: '', new: '', confirm: '' });
           alert('تم التغيير بنجاح'); onLogout();
         };
-        
-        const loadStudentLogs = async (student) => {
-           if(student.code) {
-             setLoading(true);
-             const logs = await api.getStudentLogs(student.code);
-             setSelectedStudentLogs({ student, logs });
-             setLoading(false);
-           } else alert('لا يوجد كود'); 
+
+        const viewStudentLogs = async (student) => {
+            if(!student.code) return alert('لا يوجد كود للطالب');
+            setLoading(true);
+            const logs = await api.getStudentLogs(student.code);
+            setLoading(false);
+            setSelectedStudentLogs({ student, logs });
         };
 
         return (
           <div className="pb-20">
-            {loading && <div className="fixed inset-0 bg-white/50 z-[200] flex items-center justify-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div></div>}
             <div className="bg-white p-6 rounded-2xl shadow-sm mb-6 flex flex-col justify-between items-center gap-4 text-center">
               <div><h2 className="text-2xl font-bold text-secondary">لوحة الإدارة</h2><p className="text-primary mt-1">{new Date().toLocaleDateString('ar-EG')}</p></div>
+              {loading && <div className="text-accent font-bold">جاري التحميل...</div>}
               <Button variant="danger" onClick={onLogout}>خروج</Button>
             </div>
             <div className="flex flex-wrap gap-2 mb-6 justify-center">
@@ -520,36 +542,31 @@
                   <StatCard label="غائب" value={stats.absent} icon={UserX} colorClass="text-red-600" />
                 </div>
                 
-                <Card title="سجل الحضور اليومي">
-                  <div className="space-y-3 max-h-[500px] overflow-y-auto custom-scrollbar">
+                {/* Attendance Records List */}
+                <div className="bg-white rounded-2xl shadow-sm p-4 mb-20">
+                    <h3 className="font-bold text-secondary mb-4 border-b pb-2">سجل الحضور ({filteredRecords.length})</h3>
                     {filteredRecords.length === 0 ? (
-                      <div className="text-center text-gray-500 py-4">لا توجد سجلات</div>
+                        <div className="text-center text-gray-400 py-6">لا توجد سجلات</div>
                     ) : (
-                      filteredRecords.slice().reverse().map((record, index) => {
-                        const teacherName = teachers[record.teacherCode]?.name || record.teacherCode;
-                        return (
-                          <div key={index} className="border-b last:border-0 pb-3 mb-3 last:mb-0 last:pb-0">
-                            <div className="flex justify-between items-start mb-1">
-                              <span className="font-bold text-gray-800">{record.studentName}</span>
-                              <span className={`text-xs px-2 py-1 rounded font-bold ${record.status === 'present' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                {record.status === 'present' ? 'حاضر' : 'غائب'}
-                              </span>
-                            </div>
-                            <div className="text-sm text-gray-500 flex justify-between">
-                              <span>👤 {teacherName}</span>
-                              <span>📅 {record.date}</span>
-                            </div>
-                            {record.notes && (
-                              <div className="mt-1 text-xs bg-yellow-50 text-yellow-800 p-2 rounded">
-                                📝 {record.notes}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
+                        <div className="space-y-3 max-h-[500px] overflow-y-auto custom-scrollbar">
+                            {filteredRecords.map((r, idx) => (
+                                <div key={idx} className="p-3 bg-gray-50 rounded-lg border flex flex-col gap-1">
+                                    <div className="flex justify-between items-center">
+                                        <span className="font-bold text-gray-800">{r.studentName}</span>
+                                        <span className={`text-xs px-2 py-1 rounded-full ${r.status === 'present' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                            {r.status === 'present' ? 'حاضر' : 'غائب'}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between text-xs text-gray-500">
+                                        <span>👨‍🏫 {teachers[r.teacherCode]?.name || r.teacherCode}</span>
+                                        <span>📅 {r.date}</span>
+                                    </div>
+                                    {r.notes && <div className="text-xs bg-yellow-50 text-yellow-800 p-1 mt-1 rounded">{r.notes}</div>}
+                                </div>
+                            ))}
+                        </div>
                     )}
-                  </div>
-                </Card>
+                </div>
 
                 <div className="fixed bottom-14 left-0 right-0 p-4 flex justify-center z-30 pointer-events-none">
                    <Button onClick={handleExportCSV} variant="accent" className="pointer-events-auto shadow-lg"><Download className="w-4 h-4 inline ml-2" /> تقرير الحضور (CSV)</Button>
@@ -577,24 +594,58 @@
               </div>
             )}
             {activeTab === 'students' && (
-              <Card title="الطلاب">
-                  <div className="space-y-3 max-h-[600px] overflow-y-auto custom-scrollbar">
-                     {students.map(s => (
-                       <div key={s.id} className="p-3 border rounded-lg bg-gray-50">
-                         <div className="flex justify-between items-start mb-2">
-                            <div><div className="font-bold text-secondary">{s.name}</div><div className="text-xs text-gray-500">{s.code}</div></div>
-                            <Button className="p-2 h-8 w-8 flex items-center justify-center" variant="danger" onClick={() => handleDeleteStudent(s.id)}><Trash2 className="w-4 h-4" /></Button>
-                         </div>
-                         <Button fullWidth className="text-sm py-2 mt-2" variant="primary" onClick={() => loadStudentLogs(s)}><Eye className="w-4 h-4 inline ml-1" /> عرض اليوميات</Button>
+              <Card>
+                  <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-xl font-bold text-secondary flex items-center gap-2">
+                          <Users className="w-5 h-5"/> الطلاب
+                      </h2>
+                      <span className="bg-primary/10 text-primary px-3 py-1 rounded-full text-sm font-bold">{students.length} طالب</span>
+                  </div>
+
+                  <div className="relative mb-6">
+                      <input 
+                        type="text" 
+                        placeholder="بحث بالاسم أو الكود..." 
+                        className="w-full p-3 pr-10 border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        value={studentSearch}
+                        onChange={(e) => setStudentSearch(e.target.value)}
+                      />
+                      <Search className="w-5 h-5 text-gray-400 absolute top-3.5 right-3" />
+                  </div>
+
+                  {filteredStudents.length === 0 ? (
+                      <div className="text-center py-8 text-gray-400">لا يوجد طلاب مطابقين</div>
+                  ) : (
+                      <div className="space-y-3 max-h-[600px] overflow-y-auto custom-scrollbar">
+                         {filteredStudents.map(s => (
+                           <div key={s.id} className="p-4 border border-gray-100 rounded-xl bg-gray-50 hover:border-primary/30 transition-all">
+                             <div className="flex justify-between items-start mb-3">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-full bg-secondary/10 text-secondary flex items-center justify-center font-bold text-lg">
+                                        {s.name.charAt(0)}
+                                    </div>
+                                    <div>
+                                        <div className="font-bold text-gray-800">{s.name}</div>
+                                        <div className="flex gap-2 text-xs text-gray-500 mt-1">
+                                            <span className="bg-white px-2 py-0.5 rounded border">ID: {s.code}</span>
+                                            {s.registrationDate && <span>📅 {new Date(s.registrationDate).toLocaleDateString('ar-EG')}</span>}
+                                        </div>
+                                    </div>
+                                </div>
+                                <Button className="p-2 h-8 w-8 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white" onClick={() => handleDeleteStudent(s.id)}><Trash2 className="w-4 h-4" /></Button>
+                             </div>
+                             <Button fullWidth className="text-sm py-2" variant="primary" onClick={() => viewStudentLogs(s)}><Eye className="w-4 h-4 inline ml-1" /> سجل اليوميات</Button>
+                           </div>
+                         ))}
                        </div>
-                     ))}
-                   </div>
+                  )}
               </Card>
             )}
             {activeTab === 'reports' && (
               <Card title="التقارير">
                 <div className="space-y-4">
                   <Button onClick={handleExportStudentLogsCSV} variant="primary" fullWidth><Download className="ml-2 w-4 h-4" /> يوميات الطلاب (Excel)</Button>
+                  <div className="text-sm text-gray-500 text-center mt-2">ملاحظة: النسخ الاحتياطي الكامل يتم تلقائياً عبر السحابة.</div>
                 </div>
               </Card>
             )}
@@ -645,9 +696,9 @@
              const teachers = await api.getTeachers();
              const updated = teachers[teacher.code];
              if (updated) {
-               setCurrentTeacher(updated);
-               const init = {}; updated.students?.forEach(s => init[s.name] = { status: null, notes: '' });
-               setAttendance(init);
+                setCurrentTeacher(updated);
+                const init = {}; updated.students?.forEach(s => init[s.name] = { status: null, notes: '' });
+                setAttendance(init);
              }
           }
           load();
@@ -669,42 +720,28 @@
 
         const handleAddStudent = async () => {
           if(!newStudent.name||!newStudent.id) return alert('بيانات ناقصة');
-          setLoading(true);
           const t = { ...currentTeacher }; if(!t.students) t.students=[];
-          if(t.students.some(s=>s.id===newStudent.id)) { setLoading(false); return alert('موجود'); }
+          if(t.students.some(s=>s.id===newStudent.id)) return alert('موجود');
           t.students.push(newStudent); 
+          setLoading(true);
           await api.saveTeacher(t); 
           setCurrentTeacher(t); 
-          setNewStudent({name:'',id:''}); 
           setLoading(false);
-          alert('تم');
-        };
-
-        const handleDeleteStudent = async (studentId) => {
-            if(confirm('حذف؟')){
-                setLoading(true);
-                const t={...currentTeacher};
-                t.students=t.students.filter(x=>x.id!==studentId);
-                await api.saveTeacher(t);
-                setCurrentTeacher(t);
-                setLoading(false);
-            }
+          setNewStudent({name:'',id:''}); alert('تم');
         };
 
         const handleChangePwd = async () => {
           if(newPwd.length<4) return alert('قصيرة');
-          setLoading(true);
           const t={...currentTeacher, password:newPwd}; 
+          setLoading(true);
           await api.saveTeacher(t); 
           setCurrentTeacher(t); 
-          setNewPwd(''); 
           setLoading(false);
-          alert('تم'); setShowChangePwd(false);
+          setNewPwd(''); alert('تم'); setShowChangePwd(false);
         };
 
         return (
           <div className="pb-24">
-            {loading && <div className="fixed inset-0 bg-white/50 z-[200] flex items-center justify-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div></div>}
             <Card className="mb-6 sticky top-4 z-40 border-green-100 flex justify-between items-center">
               <div><h2 className="text-xl font-bold text-secondary">الحضور</h2><div className="text-sm">{currentTeacher.name}</div></div>
               <div className="flex gap-2">
@@ -712,6 +749,7 @@
                 <Button variant="accent" onClick={()=>setShowManageStudents(true)} className="px-3 text-sm">إدارة الطلاب</Button>
               </div>
             </Card>
+            {loading && <div className="text-center py-2 text-primary">جاري المعالجة...</div>}
             <div className="space-y-4">
               {currentTeacher.students?.map(s => {
                   const d = attendance[s.name] || { status: null, notes: '' };
@@ -728,7 +766,7 @@
             </div>
             <div className="fixed bottom-0 left-0 right-0 bg-white p-4 shadow-top flex gap-4 z-50">
               <Button variant="danger" onClick={onLogout} className="flex-1">خروج</Button>
-              <Button onClick={saveAttendance} className="flex-[2]">حفظ</Button>
+              <Button onClick={saveAttendance} className="flex-[2]" disabled={loading}>{loading?'...':'حفظ'}</Button>
             </div>
             {showManageStudents && (
               <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
@@ -736,10 +774,10 @@
                   <div className="bg-gray-50 p-4 rounded mb-4">
                       <Input label="الاسم" value={newStudent.name} onChange={e=>setNewStudent({...newStudent, name:e.target.value})} />
                       <Input label="الهوية" value={newStudent.id} onChange={e=>setNewStudent({...newStudent, id:e.target.value})} />
-                      <Button fullWidth onClick={handleAddStudent} variant="accent">إضافة</Button>
+                      <Button fullWidth onClick={handleAddStudent} variant="accent" disabled={loading}>إضافة</Button>
                   </div>
                   <div className="max-h-60 overflow-y-auto space-y-2">
-                     {currentTeacher.students?.map(s=>(<div key={s.id} className="flex justify-between p-2 border bg-white"><span>{s.name}</span><button onClick={() => handleDeleteStudent(s.id)} className="text-red-500"><Trash2 className="w-4 h-4"/></button></div>))}
+                     {currentTeacher.students?.map(s=>(<div key={s.id} className="flex justify-between p-2 border bg-white"><span>{s.name}</span><button onClick={async ()=>{if(confirm('حذف؟')){const t={...currentTeacher};t.students=t.students.filter(x=>x.id!==s.id);setLoading(true);await api.saveTeacher(t);setCurrentTeacher(t);setLoading(false);}}} className="text-red-500"><Trash2 className="w-4 h-4"/></button></div>))}
                   </div>
                   <Button fullWidth variant="secondary" onClick={()=>setShowManageStudents(false)} className="mt-4">إغلاق</Button>
                 </Card>
@@ -749,7 +787,7 @@
               <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
                 <Card title="تغيير كلمة السر">
                   <Input label="الجديدة" type="password" value={newPwd} onChange={e=>setNewPwd(e.target.value)} />
-                  <div className="flex gap-2 mt-4"><Button fullWidth variant="secondary" onClick={()=>setShowChangePwd(false)}>إلغاء</Button><Button fullWidth onClick={handleChangePwd}>حفظ</Button></div>
+                  <div className="flex gap-2 mt-4"><Button fullWidth variant="secondary" onClick={()=>setShowChangePwd(false)}>إلغاء</Button><Button fullWidth onClick={handleChangePwd} disabled={loading}>حفظ</Button></div>
                 </Card>
               </div>
             )}
@@ -771,19 +809,19 @@
                     const l = await api.getStudentLogs(student.code);
                     setLogs(l);
                 }
-            };
+            }
             load();
         }, [student.code]);
 
         const handleSubmit = async () => {
           if (!form.newMemorizing || !form.review || !form.listening || !form.newTarget) return alert('أكمل البيانات');
           if (!student.code) return alert('خطأ في الكود');
-          setLoading(true);
           const rec = { ...form, date: new Date().toISOString(), dateDisplay: new Date().toLocaleDateString('ar-EG') };
+          setLoading(true);
           await api.saveStudentLog(student.code, rec);
+          setLoading(false);
           setLogs([rec, ...logs]);
           setForm({ newMemorizing: '', review: '', listening: '', newTarget: '', notes: '' });
-          setLoading(false);
           alert('تم الحفظ');
         };
 
@@ -791,14 +829,12 @@
            if(newPwd.length<4) return alert('قصيرة');
            setLoading(true);
            await api.updateStudent({ ...student, password: newPwd });
-           setNewPwd(''); 
            setLoading(false);
-           alert('تم التغيير'); onLogout();
+           setNewPwd(''); alert('تم التغيير'); onLogout();
         };
 
         return (
           <div className="pb-20">
-             {loading && <div className="fixed inset-0 bg-white/50 z-[200] flex items-center justify-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div></div>}
             <Card className="mb-6 bg-gradient-to-r from-green-50 to-white flex justify-between">
               <div><h2 className="text-2xl font-bold text-secondary">مرحباً {student.name}</h2><div className="text-sm">الكود: {student.code}</div></div>
               <Button variant="secondary" onClick={()=>setShowChangePwd(true)} className="p-2"><Key className="w-5 h-5"/></Button>
@@ -810,12 +846,12 @@
                 <Select label="🎤 التسميع" value={form.listening} onChange={e=>setForm({...form, listening:e.target.value})}><option value="">--</option><option value="نعم">نعم</option><option value="لا">لا</option><option value="جزئي">جزئي</option></Select>
                 <Input label="📍 الهدف" value={form.newTarget} onChange={e=>setForm({...form, newTarget:e.target.value})} />
                 <div className="mb-4"><label className="block mb-2 text-right">ملاحظات</label><textarea className="w-full border-2 p-3 rounded" value={form.notes} onChange={e=>setForm({...form, notes:e.target.value})} /></div>
-                <Button fullWidth onClick={handleSubmit}>حفظ</Button>
+                <Button fullWidth onClick={handleSubmit} disabled={loading}>{loading?'...':'حفظ'}</Button>
               </Card>
               <Card title="السجل" className="max-h-[800px] flex flex-col">
                  <div className="overflow-y-auto flex-1 custom-scrollbar space-y-4 pr-2">
                     {logs.length===0 && <div className="text-center py-10 text-gray-400">لا يوجد سجلات</div>}
-                    {logs.slice().sort((a,b) => new Date(b.date) - new Date(a.date)).map((log, i) => (
+                    {logs.slice().reverse().map((log, i) => (
                       <div key={i} className="bg-gray-50 rounded-xl p-4 border hover:border-green-200 transition-colors">
                         <div className="font-bold text-primary mb-2 border-b pb-1">📅 {log.dateDisplay}</div>
                         <div className="grid grid-cols-2 gap-2 text-sm">
@@ -837,7 +873,7 @@
               <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
                 <Card title="تغيير كلمة السر">
                   <Input label="الجديدة" type="password" value={newPwd} onChange={e=>setNewPwd(e.target.value)} />
-                  <div className="flex gap-2 mt-4"><Button fullWidth variant="secondary" onClick={()=>setShowChangePwd(false)}>إلغاء</Button><Button fullWidth onClick={handleChangePwd}>حفظ</Button></div>
+                  <div className="flex gap-2 mt-4"><Button fullWidth variant="secondary" onClick={()=>setShowChangePwd(false)}>إلغاء</Button><Button fullWidth onClick={handleChangePwd} disabled={loading}>حفظ</Button></div>
                 </Card>
               </div>
             )}
